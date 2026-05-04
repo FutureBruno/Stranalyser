@@ -29,3 +29,4 @@ class Athlete(Base):
 
     activities: Mapped[list["Activity"]] = relationship(back_populates="athlete", lazy="select")
     sync_state: Mapped["SyncState | None"] = relationship(back_populates="athlete", lazy="select")
+    ai_analyses: Mapped[list["AIAnalysis"]] = relationship(back_populates="athlete", lazy="select")

@@ -31,4 +31,12 @@ export const statsApi = {
   weekly: (params) => api.get('/stats/weekly', { params }),
 }
 
+export const aiApi = {
+  generateWeeklyReport: (params) => api.post('/ai/weekly-report', null, { params }),
+  getWeeklyReport: (params) => api.get('/ai/weekly-report', { params }),
+  analyzeActivity: (id, params) => api.post(`/ai/activities/${id}/analyze`, null, { params }),
+  getActivityAnalysis: (id) => api.get(`/ai/activities/${id}/analysis`),
+  listAnalyses: (params) => api.get('/ai/analyses', { params }),
+}
+
 export default api
