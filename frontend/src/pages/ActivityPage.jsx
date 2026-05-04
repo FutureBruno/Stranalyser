@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { activitiesApi } from '../api/client'
 import ActivityMap from '../components/ActivityDetail/ActivityMap'
@@ -20,9 +20,7 @@ function formatTime(seconds) {
 
 function formatPace(speed, sportType) {
   if (!speed || speed === 0) return '–'
-  if (sportType?.includes('Ride') || sportType === 'VirtualRide') {
-    return (speed * 3.6).toFixed(1) + ' km/h'
-  }
+  if (sportType?.toLowerCase().includes('ride')) return (speed * 3.6).toFixed(1) + ' km/h'
   const secsPerKm = 1000 / speed
   const m = Math.floor(secsPerKm / 60)
   const s = Math.round(secsPerKm % 60)
@@ -43,14 +41,15 @@ export default function ActivityPage() {
   const [activity, setActivity] = useState(null)
   const [streams, setStreams] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [activeIndex, setActiveIndex] = useState(null)
+
+  const handleActiveIndex = useCallback((idx) => setActiveIndex(idx), [])
 
   useEffect(() => {
     const load = async () => {
       try {
         const { data } = await activitiesApi.get(id)
         setActivity(data)
-
-        // Load streams in background
         activitiesApi.streams(id)
           .then(({ data: s }) => setStreams(s))
           .catch(() => {})
@@ -89,7 +88,7 @@ export default function ActivityPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <Link to="/activities" className="text-gray-400 hover:text-gray-600">←</Link>
+        <Link to="/activities" className="text-gray-400 hover:text-gray-600 text-lg">←</Link>
         <div>
           <h1 className="text-2xl font-bold">{activity.name}</h1>
           <p className="text-sm text-gray-500">{activity.sport_type} · {date}</p>
@@ -122,12 +121,23 @@ export default function ActivityPage() {
       )}
 
       {activity.polyline && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden" style={{ height: '400px' }}>
-          <ActivityMap polyline={activity.polyline} streams={streams} />
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden" style={{ height: '380px' }}>
+          <ActivityMap
+            polyline={activity.polyline}
+            streams={streams}
+            activeIndex={activeIndex}
+          />
         </div>
       )}
 
-      {streams && <ActivityStats streams={streams} sportType={activity.sport_type} />}
+      {streams && (
+        <ActivityStats
+          streams={streams}
+          sportType={activity.sport_type}
+          activeIndex={activeIndex}
+          onActiveIndex={handleActiveIndex}
+        />
+      )}
     </div>
   )
 }

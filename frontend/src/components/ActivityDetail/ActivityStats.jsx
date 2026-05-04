@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -12,104 +12,193 @@ import { Line } from 'react-chartjs-2'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler)
 
-const CHART_OPTIONS_BASE = {
-  responsive: true,
-  animation: false,
-  plugins: { legend: { display: false } },
-  interaction: { mode: 'index', intersect: false },
-  scales: {
-    x: {
-      ticks: { maxTicksLimit: 8, font: { size: 11 } },
-      grid: { display: false },
-    },
-    y: { ticks: { font: { size: 11 } } },
+// Draws a vertical dashed line at the active index across all charts
+const crosshairPlugin = {
+  id: 'crosshair',
+  afterDraw(chart) {
+    const idx = chart.options.plugins?.crosshair?.activeIndex
+    if (idx == null) return
+    const meta = chart.getDatasetMeta(0)
+    const point = meta?.data?.[idx]
+    if (!point) return
+    const { ctx, chartArea: { top, bottom } } = chart
+    ctx.save()
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)'
+    ctx.lineWidth = 1
+    ctx.setLineDash([4, 3])
+    ctx.beginPath()
+    ctx.moveTo(point.x, top)
+    ctx.lineTo(point.x, bottom)
+    ctx.stroke()
+    ctx.restore()
   },
 }
+ChartJS.register(crosshairPlugin)
 
-function buildChart(label, data, color, yLabel, yFormatter) {
-  return {
-    data: {
-      datasets: [
-        {
-          label,
-          data,
-          borderColor: color,
-          backgroundColor: color + '22',
-          borderWidth: 2,
-          pointRadius: 0,
-          tension: 0.3,
-          fill: true,
-        },
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function fmtPace(secsPerKm) {
+  const m = Math.floor(secsPerKm / 60)
+  const s = Math.round(secsPerKm % 60)
+  return `${m}:${String(s).padStart(2, '0')} /km`
+}
+
+// ── Single linked chart ───────────────────────────────────────────────────────
+
+function LinkedChart({ title, labels, primaryDataset, elevDataset, scaleLeft, activeIndex, onActiveIndex }) {
+  const chartRef = useRef(null)
+
+  // Sync tooltip when activeIndex changes from outside (other chart or map)
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    if (activeIndex == null) {
+      chart.tooltip.setActiveElements([], { x: 0, y: 0 })
+      chart.update('none')
+      return
+    }
+    const meta = chart.getDatasetMeta(1) // primary dataset is index 1
+    const point = meta?.data?.[activeIndex]
+    if (!point) return
+    chart.tooltip.setActiveElements(
+      [
+        { datasetIndex: 0, index: activeIndex },
+        { datasetIndex: 1, index: activeIndex },
       ],
+      { x: point.x, y: point.y }
+    )
+    chart.update('none')
+  }, [activeIndex])
+
+  const handleMouseMove = useCallback(
+    (e) => {
+      const chart = chartRef.current
+      if (!chart) return
+      const els = chart.getElementsAtEventForMode(e.nativeEvent, 'index', { intersect: false }, true)
+      if (els.length > 0) onActiveIndex(els[0].index)
     },
-    options: {
-      ...CHART_OPTIONS_BASE,
-      scales: {
-        ...CHART_OPTIONS_BASE.scales,
-        y: {
-          ...CHART_OPTIONS_BASE.scales.y,
-          title: { display: true, text: yLabel, font: { size: 11 } },
-          ticks: { callback: yFormatter, font: { size: 11 } },
+    [onActiveIndex]
+  )
+
+  const handleMouseLeave = useCallback(() => onActiveIndex(null), [onActiveIndex])
+
+  const data = {
+    labels,
+    datasets: [
+      {
+        ...elevDataset,
+        yAxisID: 'elev',
+        order: 2,
+      },
+      {
+        ...primaryDataset,
+        yAxisID: 'metric',
+        order: 1,
+      },
+    ],
+  }
+
+  const options = {
+    responsive: true,
+    animation: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          title: (items) => `${items[0]?.label ?? ''}`,
+          label: (item) => {
+            if (item.datasetIndex === 0) return `Höhe: ${item.raw} m`
+            return `${primaryDataset.label}: ${item.formattedValue}`
+          },
         },
+      },
+      crosshair: { activeIndex },
+    },
+    scales: {
+      x: {
+        ticks: { maxTicksLimit: 8, font: { size: 10 } },
+        grid: { display: false },
+      },
+      metric: {
+        type: 'linear',
+        position: 'left',
+        title: { display: true, text: scaleLeft.unit, font: { size: 10 } },
+        ticks: { callback: scaleLeft.formatter, font: { size: 10 } },
+      },
+      elev: {
+        type: 'linear',
+        position: 'right',
+        display: false, // area visible, axis hidden
       },
     },
   }
-}
 
-function ChartCard({ title, children }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
       <h3 className="text-sm font-semibold text-gray-600 mb-3">{title}</h3>
-      {children}
+      <div onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave}>
+        <Line ref={chartRef} data={data} options={options} />
+      </div>
     </div>
   )
 }
 
-export default function ActivityStats({ streams, sportType }) {
-  const distLabels = useMemo(() => {
-    const d = streams?.distance?.data || []
-    return d.map((v) => (v / 1000).toFixed(2) + ' km')
+// ── Main export ───────────────────────────────────────────────────────────────
+
+export default function ActivityStats({ streams, sportType, activeIndex, onActiveIndex }) {
+  const isRide = sportType?.toLowerCase().includes('ride')
+
+  const { labels, elevData } = useMemo(() => {
+    const dist = streams?.distance?.data ?? []
+    const alt = streams?.altitude?.data ?? []
+    return {
+      labels: dist.map((d) => (d / 1000).toFixed(2) + ' km'),
+      elevData: alt.map((v) => Math.round(v)),
+    }
   }, [streams])
 
-  const isRide = sportType?.toLowerCase().includes('ride')
+  const elevDataset = {
+    label: 'Höhe',
+    data: elevData,
+    backgroundColor: 'rgba(99,102,241,0.13)',
+    borderColor: 'rgba(99,102,241,0.3)',
+    borderWidth: 1,
+    fill: true,
+    pointRadius: 0,
+    tension: 0.3,
+  }
 
   const charts = useMemo(() => {
     const result = []
 
     // Speed / Pace
     if (streams?.velocity_smooth?.data?.length) {
-      const vals = streams.velocity_smooth.data.map((v) =>
-        isRide ? +(v * 3.6).toFixed(1) : v > 0 ? +(1000 / v / 60).toFixed(2) : 0
-      )
+      const vals = streams.velocity_smooth.data.map((v) => {
+        if (isRide) return +(v * 3.6).toFixed(1)
+        return v > 0 ? +(1000 / v).toFixed(0) : 0 // secs/km
+      })
       result.push({
         title: isRide ? 'Geschwindigkeit' : 'Tempo',
-        ...buildChart(
-          isRide ? 'km/h' : 'min/km',
-          vals.map((v, i) => ({ x: distLabels[i], y: v })),
-          '#FC4C02',
-          isRide ? 'km/h' : 'min/km',
-          isRide
-            ? (v) => `${v} km/h`
-            : (v) => {
-                const m = Math.floor(v)
-                const s = Math.round((v - m) * 60)
-                return `${m}:${String(s).padStart(2, '0')}`
-              }
-        ),
-      })
-    }
-
-    // Elevation
-    if (streams?.altitude?.data?.length) {
-      result.push({
-        title: 'Höhenprofil',
-        ...buildChart(
-          'Höhe (m)',
-          streams.altitude.data.map((v, i) => ({ x: distLabels[i], y: Math.round(v) })),
-          '#6366f1',
-          'm ü. NN',
-          (v) => `${v} m`
-        ),
+        primary: {
+          label: isRide ? 'km/h' : 'min/km',
+          data: vals,
+          borderColor: '#FC4C02',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.3,
+          fill: false,
+        },
+        scaleLeft: {
+          unit: isRide ? 'km/h' : 'min/km',
+          formatter: isRide
+            ? (v) => `${v}`
+            : (v) => fmtPace(v),
+        },
+        tooltipFormatter: isRide
+          ? (v) => `${v} km/h`
+          : (v) => fmtPace(v),
       })
     }
 
@@ -117,13 +206,17 @@ export default function ActivityStats({ streams, sportType }) {
     if (streams?.heartrate?.data?.length) {
       result.push({
         title: 'Herzschlag',
-        ...buildChart(
-          'bpm',
-          streams.heartrate.data.map((v, i) => ({ x: distLabels[i], y: Math.round(v) })),
-          '#ef4444',
-          'bpm',
-          (v) => `${v} bpm`
-        ),
+        primary: {
+          label: 'bpm',
+          data: streams.heartrate.data.map((v) => Math.round(v)),
+          borderColor: '#ef4444',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.3,
+          fill: false,
+        },
+        scaleLeft: { unit: 'bpm', formatter: (v) => `${v}` },
       })
     }
 
@@ -131,38 +224,38 @@ export default function ActivityStats({ streams, sportType }) {
     if (streams?.cadence?.data?.length) {
       result.push({
         title: isRide ? 'Trittfrequenz' : 'Schrittfrequenz',
-        ...buildChart(
-          'rpm',
-          streams.cadence.data.map((v, i) => ({ x: distLabels[i], y: Math.round(v) })),
-          '#22c55e',
-          isRide ? 'rpm' : 'spm',
-          (v) => `${v}`
-        ),
+        primary: {
+          label: isRide ? 'rpm' : 'spm',
+          data: streams.cadence.data.map((v) => Math.round(v)),
+          borderColor: '#22c55e',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.3,
+          fill: false,
+        },
+        scaleLeft: { unit: isRide ? 'rpm' : 'spm', formatter: (v) => `${v}` },
       })
     }
 
     return result
-  }, [streams, distLabels, isRide])
+  }, [streams, isRide])
 
-  if (!charts.length) return null
-
-  const chartOpts = (opts) => ({
-    ...opts,
-    scales: {
-      ...opts.scales,
-      x: {
-        ...opts.scales.x,
-        labels: distLabels,
-      },
-    },
-  })
+  if (!charts.length || !labels.length) return null
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {charts.map(({ title, data, options }) => (
-        <ChartCard key={title} title={title}>
-          <Line data={data} options={chartOpts(options)} />
-        </ChartCard>
+    <div className="space-y-4">
+      {charts.map(({ title, primary, scaleLeft }) => (
+        <LinkedChart
+          key={title}
+          title={title}
+          labels={labels}
+          primaryDataset={primary}
+          elevDataset={elevDataset}
+          scaleLeft={scaleLeft}
+          activeIndex={activeIndex}
+          onActiveIndex={onActiveIndex}
+        />
       ))}
     </div>
   )
