@@ -23,7 +23,7 @@ celery_app.conf.update(
     beat_schedule={
         "incremental-sync-all-athletes": {
             "task": "app.tasks.sync_tasks.incremental_sync_all",
-            "schedule": crontab(minute="*/30"),
+            "schedule": crontab(minute="*/5"),
         },
     },
     worker_prefetch_multiplier=1,

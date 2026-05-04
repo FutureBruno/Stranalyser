@@ -1,10 +1,9 @@
-import { useEffect, useRef, useMemo } from 'react'
-import { MapContainer, TileLayer, Polyline, useMap } from 'react-leaflet'
+import { useEffect, useMemo, useRef } from 'react'
+import { MapContainer, TileLayer, Polyline, useMap, CircleMarker } from 'react-leaflet'
 
 function decodePolyline(encoded) {
   const coords = []
   let index = 0, lat = 0, lng = 0
-
   while (index < encoded.length) {
     let b, shift = 0, result = 0
     do {
@@ -12,19 +11,14 @@ function decodePolyline(encoded) {
       result |= (b & 0x1f) << shift
       shift += 5
     } while (b >= 0x20)
-    const dlat = (result & 1) ? ~(result >> 1) : (result >> 1)
-    lat += dlat
-
-    shift = 0
-    result = 0
+    lat += (result & 1) ? ~(result >> 1) : result >> 1
+    shift = 0; result = 0
     do {
       b = encoded.charCodeAt(index++) - 63
       result |= (b & 0x1f) << shift
       shift += 5
     } while (b >= 0x20)
-    const dlng = (result & 1) ? ~(result >> 1) : (result >> 1)
-    lng += dlng
-
+    lng += (result & 1) ? ~(result >> 1) : result >> 1
     coords.push([lat / 1e5, lng / 1e5])
   }
   return coords
@@ -33,25 +27,24 @@ function decodePolyline(encoded) {
 function FitBounds({ positions }) {
   const map = useMap()
   useEffect(() => {
-    if (positions.length > 0) {
-      map.fitBounds(positions, { padding: [20, 20] })
-    }
+    if (positions.length > 0) map.fitBounds(positions, { padding: [20, 20] })
   }, [map, positions])
   return null
 }
 
-export default function ActivityMap({ polyline, streams }) {
+export default function ActivityMap({ polyline, streams, activeIndex }) {
   const positions = useMemo(() => {
-    if (streams?.latlng?.data?.length > 0) {
-      return streams.latlng.data
-    }
-    if (polyline) {
-      return decodePolyline(polyline)
-    }
+    if (streams?.latlng?.data?.length > 0) return streams.latlng.data
+    if (polyline) return decodePolyline(polyline)
     return []
   }, [polyline, streams])
 
-  if (positions.length === 0) {
+  const activePos = useMemo(() => {
+    if (activeIndex == null || !streams?.latlng?.data) return null
+    return streams.latlng.data[activeIndex] ?? null
+  }, [activeIndex, streams])
+
+  if (!positions.length) {
     return (
       <div className="flex items-center justify-center h-full text-gray-400 text-sm">
         Keine Kartendaten verfügbar
@@ -69,6 +62,18 @@ export default function ActivityMap({ polyline, streams }) {
       />
       <Polyline positions={positions} color="#FC4C02" weight={3} opacity={0.8} />
       <FitBounds positions={positions} />
+      {activePos && (
+        <CircleMarker
+          center={activePos}
+          radius={7}
+          pathOptions={{
+            color: '#fff',
+            fillColor: '#FC4C02',
+            fillOpacity: 1,
+            weight: 2.5,
+          }}
+        />
+      )}
     </MapContainer>
   )
 }

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func, and_, extract, text
+from sqlalchemy import select, func, and_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -13,7 +13,15 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 async def overview(
     athlete_id: int = Depends(require_athlete_id),
     db: AsyncSession = Depends(get_db),
+    days: int = Query(7, ge=1),
+    sport_type: str | None = None,
 ) -> dict:
+    filters = [Activity.athlete_id == athlete_id]
+    if days:
+        filters.append(Activity.start_date >= text(f"NOW() - INTERVAL '{days} days'"))
+    if sport_type:
+        filters.append(Activity.sport_type == sport_type)
+
     stmt = (
         select(
             Activity.sport_type,
@@ -22,7 +30,7 @@ async def overview(
             func.sum(Activity.moving_time).label("total_moving_time"),
             func.sum(Activity.total_elevation_gain).label("total_elevation"),
         )
-        .where(Activity.athlete_id == athlete_id)
+        .where(and_(*filters))
         .group_by(Activity.sport_type)
     )
     result = await db.execute(stmt)
@@ -44,7 +52,7 @@ async def overview(
         func.sum(Activity.distance),
         func.sum(Activity.moving_time),
         func.sum(Activity.total_elevation_gain),
-    ).where(Activity.athlete_id == athlete_id)
+    ).where(and_(*filters))
     total_row = (await db.execute(total_stmt)).fetchone()
 
     return {
@@ -60,34 +68,37 @@ async def overview(
 async def weekly(
     athlete_id: int = Depends(require_athlete_id),
     db: AsyncSession = Depends(get_db),
-    weeks: int = Query(12, ge=1, le=52),
+    days: int = Query(7, ge=1, le=365),
     sport_type: str | None = None,
 ) -> list[dict]:
     filters = [
         Activity.athlete_id == athlete_id,
-        Activity.start_date >= text(f"NOW() - INTERVAL '{weeks} weeks'"),
+        Activity.start_date >= text(f"NOW() - INTERVAL '{days} days'"),
     ]
     if sport_type:
         filters.append(Activity.sport_type == sport_type)
 
+    # For short ranges use day buckets, for longer ranges use week buckets
+    bucket = "day" if days <= 31 else "week"
+
     stmt = (
         select(
-            func.date_trunc("week", Activity.start_date_local).label("week"),
+            func.date_trunc(bucket, Activity.start_date_local).label("bucket"),
             func.count(Activity.id).label("count"),
             func.sum(Activity.distance).label("distance"),
             func.sum(Activity.total_elevation_gain).label("elevation"),
             func.sum(Activity.moving_time).label("moving_time"),
         )
         .where(and_(*filters))
-        .group_by(text("week"))
-        .order_by(text("week"))
+        .group_by(text("bucket"))
+        .order_by(text("bucket"))
     )
     result = await db.execute(stmt)
     rows = result.fetchall()
 
     return [
         {
-            "week": row.week.isoformat() if row.week else None,
+            "bucket": row.bucket.isoformat() if row.bucket else None,
             "count": row.count,
             "distance": row.distance or 0,
             "elevation": row.elevation or 0,
