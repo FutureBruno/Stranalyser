@@ -4,9 +4,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.activity import Activity
+from app.routers.activities import RIDE_TYPES
 from app.routers.auth import require_athlete_id
 
 router = APIRouter(prefix="/stats", tags=["stats"])
+
+
+def _sport_type_filter(sport_type: str | None):
+    if not sport_type:
+        return None
+    if sport_type == "Ride":
+        return Activity.sport_type.in_(RIDE_TYPES)
+    return Activity.sport_type == sport_type
 
 
 @router.get("/overview")
@@ -19,8 +28,9 @@ async def overview(
     filters = [Activity.athlete_id == athlete_id]
     if days:
         filters.append(Activity.start_date >= text(f"NOW() - INTERVAL '{days} days'"))
-    if sport_type:
-        filters.append(Activity.sport_type == sport_type)
+    f = _sport_type_filter(sport_type)
+    if f is not None:
+        filters.append(f)
 
     stmt = (
         select(
@@ -75,8 +85,9 @@ async def weekly(
         Activity.athlete_id == athlete_id,
         Activity.start_date >= text(f"NOW() - INTERVAL '{days} days'"),
     ]
-    if sport_type:
-        filters.append(Activity.sport_type == sport_type)
+    f = _sport_type_filter(sport_type)
+    if f is not None:
+        filters.append(f)
 
     # For short ranges use day buckets, for longer ranges use week buckets
     bucket = "day" if days <= 31 else "week"

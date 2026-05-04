@@ -11,6 +11,9 @@ from app.routers.auth import require_athlete_id
 
 router = APIRouter(prefix="/activities", tags=["activities"])
 
+# All Strava sport types that count as "Radfahren"
+RIDE_TYPES = {"Ride", "MountainBikeRide", "GravelRide", "EBikeRide", "EMountainBikeRide"}
+
 
 def _format_activity(a: Activity) -> dict:
     return {
@@ -59,7 +62,10 @@ async def list_activities(
     filters = [Activity.athlete_id == athlete_id]
 
     if sport_type:
-        filters.append(Activity.sport_type == sport_type)
+        if sport_type == "Ride":
+            filters.append(Activity.sport_type.in_(RIDE_TYPES))
+        else:
+            filters.append(Activity.sport_type == sport_type)
     if start_date:
         filters.append(Activity.start_date >= datetime.fromisoformat(start_date))
     if end_date:

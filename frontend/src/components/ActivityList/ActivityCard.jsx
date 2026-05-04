@@ -3,6 +3,10 @@ import { Link } from 'react-router-dom'
 const SPORT_ICONS = {
   Run: '🏃',
   Ride: '🚴',
+  MountainBikeRide: '🚵',
+  GravelRide: '🚴',
+  EBikeRide: '🚴',
+  EMountainBikeRide: '🚵',
   Swim: '🏊',
   Hike: '🥾',
   Walk: '🚶',
@@ -10,6 +14,20 @@ const SPORT_ICONS = {
   TrailRun: '🏔️',
   WeightTraining: '🏋️',
   Yoga: '🧘',
+}
+
+const SPORT_LABELS = {
+  MountainBikeRide: 'Radfahren',
+  GravelRide: 'Radfahren',
+  EBikeRide: 'Radfahren',
+  EMountainBikeRide: 'Radfahren',
+  Ride: 'Radfahren',
+  VirtualRide: 'Virtual Ride',
+  Run: 'Laufen',
+  TrailRun: 'Trail Run',
+  Swim: 'Schwimmen',
+  Hike: 'Wandern',
+  Walk: 'Gehen',
 }
 
 function formatDistance(m) {
@@ -50,6 +68,7 @@ function formatDate(dateStr) {
 
 export default function ActivityCard({ activity }) {
   const icon = SPORT_ICONS[activity.sport_type] || '🏅'
+  const label = SPORT_LABELS[activity.sport_type] || activity.sport_type
 
   return (
     <Link
@@ -62,7 +81,7 @@ export default function ActivityCard({ activity }) {
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-gray-900 truncate">{activity.name || 'Aktivität'}</p>
             <p className="text-xs text-gray-500 mt-0.5">
-              {activity.sport_type} · {formatDate(activity.start_date_local || activity.start_date)}
+              {label} · {formatDate(activity.start_date_local || activity.start_date)}
             </p>
           </div>
         </div>
