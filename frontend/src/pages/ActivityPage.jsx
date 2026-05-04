@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { activitiesApi } from '../api/client'
 import ActivityMap from '../components/ActivityDetail/ActivityMap'
 import ActivityStats from '../components/ActivityDetail/ActivityStats'
+import AIAnalysis from '../components/ActivityDetail/AIAnalysis'
 
 function formatDistance(m) {
   if (!m) return '–'
@@ -138,6 +139,8 @@ export default function ActivityPage() {
           onActiveIndex={handleActiveIndex}
         />
       )}
+
+      <AIAnalysis activityId={id} />
     </div>
   )
 }

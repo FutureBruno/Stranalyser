@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import WeeklyChart from '../components/Dashboard/WeeklyChart'
 import OverviewStats from '../components/Dashboard/OverviewStats'
+import WeeklyReport from '../components/Dashboard/WeeklyReport'
 
 const TIME_OPTIONS = [
   { label: '7 Tage', days: 7 },
@@ -99,6 +100,9 @@ export default function DashboardPage() {
         </h2>
         <WeeklyChart days={days} sportType={sportType} />
       </div>
+
+      {/* AI Weekly Report */}
+      <WeeklyReport />
     </div>
   )
 }
