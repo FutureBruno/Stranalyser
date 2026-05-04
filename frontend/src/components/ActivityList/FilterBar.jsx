@@ -1,7 +1,7 @@
 const SPORT_TYPES = [
   { value: '', label: 'Alle' },
   { value: 'Run', label: 'Laufen' },
-  { value: 'Ride', label: 'Radfahren' },
+  { value: 'Ride', label: 'Radfahren' },   // inkl. MTB, Gravel, E-Bike
   { value: 'Swim', label: 'Schwimmen' },
   { value: 'Hike', label: 'Wandern' },
   { value: 'Walk', label: 'Gehen' },
