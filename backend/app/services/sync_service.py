@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
-from app.database import AsyncSessionLocal
+from app.database import get_worker_session
 from app.models.activity import Activity, ActivityStream
 from app.models.athlete import Athlete
 from app.models.sync_state import SyncState
@@ -79,7 +79,7 @@ async def upsert_activities(session, rows: list[dict]) -> int:
 
 async def sync_all_activities(athlete_id: int) -> int:
     """Fetch all historical activities from Strava and store in DB."""
-    async with AsyncSessionLocal() as session:
+    async with get_worker_session() as session:
         athlete = await session.get(Athlete, athlete_id)
         if not athlete:
             logger.error("Athlete %s not found", athlete_id)
@@ -94,71 +94,70 @@ async def sync_all_activities(athlete_id: int) -> int:
             sync_state.error_message = None
         await session.commit()
 
-        client = StravaClient(athlete)
-        total = 0
-        page = 1
+    client = StravaClient(athlete)
+    total = 0
+    page = 1
 
-        try:
-            while True:
-                logger.info("Fetching activities page %d for athlete %d", page, athlete_id)
-                try:
-                    activities_data = await client.list_activities(page=page, per_page=200)
-                except StravaAPIError as e:
-                    if e.status_code == 429:
-                        logger.warning("Rate limited, sleeping 15 minutes")
-                        await asyncio.sleep(900)
-                        continue
-                    raise
+    try:
+        while True:
+            logger.info("Fetching activities page %d for athlete %d", page, athlete_id)
+            try:
+                activities_data = await client.list_activities(page=page, per_page=200)
+            except StravaAPIError as e:
+                if e.status_code == 429:
+                    logger.warning("Rate limited, sleeping 15 minutes")
+                    await asyncio.sleep(900)
+                    continue
+                raise
 
-                if not activities_data:
-                    break
+            if not activities_data:
+                break
 
-                rows = [_map_activity(a, athlete_id) for a in activities_data]
+            rows = [_map_activity(a, athlete_id) for a in activities_data]
 
-                async with AsyncSessionLocal() as write_session:
-                    count = await upsert_activities(write_session, rows)
-                    # Persist refreshed tokens
-                    db_athlete = await write_session.get(Athlete, athlete_id)
-                    if db_athlete:
-                        db_athlete.access_token = athlete.access_token
-                        db_athlete.refresh_token = athlete.refresh_token
-                        db_athlete.token_expires_at = athlete.token_expires_at
-                    await write_session.commit()
+            async with get_worker_session() as write_session:
+                count = await upsert_activities(write_session, rows)
+                db_athlete = await write_session.get(Athlete, athlete_id)
+                if db_athlete:
+                    db_athlete.access_token = athlete.access_token
+                    db_athlete.refresh_token = athlete.refresh_token
+                    db_athlete.token_expires_at = athlete.token_expires_at
+                await write_session.commit()
 
-                total += count
-                page += 1
+            total += count
+            page += 1
 
-                if len(activities_data) < 200:
-                    break
+            if len(activities_data) < 200:
+                break
 
-                await asyncio.sleep(1)
+            await asyncio.sleep(1)
 
-            async with AsyncSessionLocal() as final_session:
-                state = await final_session.get(SyncState, athlete_id)
-                if state:
-                    state.sync_status = "idle"
-                    state.last_full_sync = datetime.now(tz=timezone.utc)
-                    state.last_incremental_sync = datetime.now(tz=timezone.utc)
-                    state.activities_synced = total
-                await final_session.commit()
+        async with get_worker_session() as final_session:
+            state = await final_session.get(SyncState, athlete_id)
+            if state:
+                state.sync_status = "idle"
+                state.last_full_sync = datetime.now(tz=timezone.utc)
+                state.last_incremental_sync = datetime.now(tz=timezone.utc)
+                state.activities_synced = total
+            await final_session.commit()
 
-            logger.info("Full sync complete: %d activities for athlete %d", total, athlete_id)
-            return total
+        logger.info("Full sync complete: %d activities for athlete %d", total, athlete_id)
+        return total
 
-        except Exception as exc:
-            logger.exception("Sync failed for athlete %d", athlete_id)
-            async with AsyncSessionLocal() as err_session:
-                state = await err_session.get(SyncState, athlete_id)
-                if state:
-                    state.sync_status = "error"
-                    state.error_message = str(exc)
-                await err_session.commit()
-            raise
+    except Exception as exc:
+        logger.exception("Sync failed for athlete %d", athlete_id)
+        async with get_worker_session() as err_session:
+            state = await err_session.get(SyncState, athlete_id)
+            if state:
+                state.sync_status = "error"
+                state.error_message = str(exc)
+            await err_session.commit()
+        raise
 
 
 async def sync_incremental(athlete_id: int) -> int:
     """Fetch only new activities since last sync."""
-    async with AsyncSessionLocal() as session:
+    async with get_worker_session() as session:
         athlete = await session.get(Athlete, athlete_id)
         sync_state = await session.get(SyncState, athlete_id)
 
@@ -169,20 +168,22 @@ async def sync_incremental(athlete_id: int) -> int:
         if sync_state and sync_state.last_incremental_sync:
             after_ts = int(sync_state.last_incremental_sync.timestamp())
 
-        client = StravaClient(athlete)
-        activities_data = await client.list_activities(after=after_ts, per_page=200)
+    client = StravaClient(athlete)
+    activities_data = await client.list_activities(after=after_ts, per_page=200)
 
-        if not activities_data:
-            return 0
+    if not activities_data:
+        return 0
 
-        rows = [_map_activity(a, athlete_id) for a in activities_data]
+    rows = [_map_activity(a, athlete_id) for a in activities_data]
+
+    async with get_worker_session() as session:
         count = await upsert_activities(session, rows)
 
-        if sync_state:
-            sync_state.last_incremental_sync = datetime.now(tz=timezone.utc)
-            sync_state.activities_synced = (sync_state.activities_synced or 0) + count
+        state = await session.get(SyncState, athlete_id)
+        if state:
+            state.last_incremental_sync = datetime.now(tz=timezone.utc)
+            state.activities_synced = (state.activities_synced or 0) + count
 
-        # Persist refreshed tokens
         db_athlete = await session.get(Athlete, athlete_id)
         if db_athlete:
             db_athlete.access_token = athlete.access_token
@@ -190,13 +191,14 @@ async def sync_incremental(athlete_id: int) -> int:
             db_athlete.token_expires_at = athlete.token_expires_at
 
         await session.commit()
-        logger.info("Incremental sync: %d new activities for athlete %d", count, athlete_id)
-        return count
+
+    logger.info("Incremental sync: %d new activities for athlete %d", count, athlete_id)
+    return count
 
 
 async def fetch_streams_for_activity(activity_id: int) -> None:
     """Fetch GPS/HR/altitude streams for one activity."""
-    async with AsyncSessionLocal() as session:
+    async with get_worker_session() as session:
         activity = await session.get(Activity, activity_id)
         if not activity or activity.streams_fetched:
             return
@@ -205,32 +207,37 @@ async def fetch_streams_for_activity(activity_id: int) -> None:
         if not athlete:
             return
 
-        client = StravaClient(athlete)
-        try:
-            streams_data = await client.get_streams(activity_id)
-        except StravaAPIError as e:
-            logger.warning("Could not fetch streams for activity %d: %s", activity_id, e)
-            return
+    client = StravaClient(athlete)
+    try:
+        streams_data = await client.get_streams(activity_id)
+    except StravaAPIError as e:
+        logger.warning("Could not fetch streams for activity %d: %s", activity_id, e)
+        return
 
-        rows = []
-        for stream_type, stream_info in streams_data.items():
-            rows.append(ActivityStream(
+    async with get_worker_session() as session:
+        rows = [
+            ActivityStream(
                 activity_id=activity_id,
                 stream_type=stream_type,
                 data=stream_info.get("data", []),
                 original_size=stream_info.get("original_size"),
                 resolution=stream_info.get("resolution"),
                 series_type=stream_info.get("series_type"),
-            ))
-
+            )
+            for stream_type, stream_info in streams_data.items()
+        ]
         session.add_all(rows)
-        activity.streams_fetched = True
 
-        db_athlete = await session.get(Athlete, activity.athlete_id)
+        act = await session.get(Activity, activity_id)
+        if act:
+            act.streams_fetched = True
+
+        db_athlete = await session.get(Athlete, activity_id)
         if db_athlete:
             db_athlete.access_token = athlete.access_token
             db_athlete.refresh_token = athlete.refresh_token
             db_athlete.token_expires_at = athlete.token_expires_at
 
         await session.commit()
-        logger.info("Streams fetched for activity %d", activity_id)
+
+    logger.info("Streams fetched for activity %d", activity_id)
