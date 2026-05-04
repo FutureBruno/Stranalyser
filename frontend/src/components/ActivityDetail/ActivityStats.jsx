@@ -6,79 +6,164 @@ import {
   PointElement,
   LineElement,
   Tooltip,
-  Legend,
   Filler,
 } from 'chart.js'
 import { Line } from 'react-chartjs-2'
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler)
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler)
 
-function buildDataset(label, data, color, fill = false) {
-  return {
-    label,
-    data,
-    borderColor: color,
-    backgroundColor: fill ? color + '33' : 'transparent',
-    borderWidth: 2,
-    pointRadius: 0,
-    tension: 0.3,
-    fill,
-  }
+const CHART_OPTIONS_BASE = {
+  responsive: true,
+  animation: false,
+  plugins: { legend: { display: false } },
+  interaction: { mode: 'index', intersect: false },
+  scales: {
+    x: {
+      ticks: { maxTicksLimit: 8, font: { size: 11 } },
+      grid: { display: false },
+    },
+    y: { ticks: { font: { size: 11 } } },
+  },
 }
 
-export default function ActivityStats({ streams, sportType }) {
-  const { labels, datasets } = useMemo(() => {
-    const distData = streams?.distance?.data || []
-    const labels = distData.map((d) => (d / 1000).toFixed(2))
-
-    const ds = []
-
-    if (streams?.altitude?.data) {
-      ds.push(buildDataset('Höhe (m)', streams.altitude.data, '#6366f1', true))
-    }
-    if (streams?.heartrate?.data) {
-      ds.push(buildDataset('Puls (bpm)', streams.heartrate.data, '#ef4444'))
-    }
-    if (streams?.velocity_smooth?.data) {
-      const isRide = sportType?.includes('Ride')
-      const converted = streams.velocity_smooth.data.map((v) =>
-        isRide ? +(v * 3.6).toFixed(1) : +(1000 / v / 60).toFixed(2)
-      )
-      ds.push(buildDataset(isRide ? 'Geschwindigkeit (km/h)' : 'Pace (min/km)', converted, '#FC4C02'))
-    }
-    if (streams?.cadence?.data) {
-      ds.push(buildDataset('Kadenz', streams.cadence.data, '#22c55e'))
-    }
-
-    return { labels, datasets: ds }
-  }, [streams, sportType])
-
-  if (!datasets.length) return null
-
-  const options = {
-    responsive: true,
-    animation: false,
-    plugins: {
-      legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+function buildChart(label, data, color, yLabel, yFormatter) {
+  return {
+    data: {
+      datasets: [
+        {
+          label,
+          data,
+          borderColor: color,
+          backgroundColor: color + '22',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.3,
+          fill: true,
+        },
+      ],
     },
-    scales: {
-      x: {
-        ticks: {
-          maxTicksLimit: 10,
-          callback: (_, i) => labels[i] ? labels[i] + ' km' : '',
+    options: {
+      ...CHART_OPTIONS_BASE,
+      scales: {
+        ...CHART_OPTIONS_BASE.scales,
+        y: {
+          ...CHART_OPTIONS_BASE.scales.y,
+          title: { display: true, text: yLabel, font: { size: 11 } },
+          ticks: { callback: yFormatter, font: { size: 11 } },
         },
       },
     },
-    interaction: {
-      mode: 'index',
-      intersect: false,
-    },
   }
+}
+
+function ChartCard({ title, children }) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-5">
+      <h3 className="text-sm font-semibold text-gray-600 mb-3">{title}</h3>
+      {children}
+    </div>
+  )
+}
+
+export default function ActivityStats({ streams, sportType }) {
+  const distLabels = useMemo(() => {
+    const d = streams?.distance?.data || []
+    return d.map((v) => (v / 1000).toFixed(2) + ' km')
+  }, [streams])
+
+  const isRide = sportType?.toLowerCase().includes('ride')
+
+  const charts = useMemo(() => {
+    const result = []
+
+    // Speed / Pace
+    if (streams?.velocity_smooth?.data?.length) {
+      const vals = streams.velocity_smooth.data.map((v) =>
+        isRide ? +(v * 3.6).toFixed(1) : v > 0 ? +(1000 / v / 60).toFixed(2) : 0
+      )
+      result.push({
+        title: isRide ? 'Geschwindigkeit' : 'Tempo',
+        ...buildChart(
+          isRide ? 'km/h' : 'min/km',
+          vals.map((v, i) => ({ x: distLabels[i], y: v })),
+          '#FC4C02',
+          isRide ? 'km/h' : 'min/km',
+          isRide
+            ? (v) => `${v} km/h`
+            : (v) => {
+                const m = Math.floor(v)
+                const s = Math.round((v - m) * 60)
+                return `${m}:${String(s).padStart(2, '0')}`
+              }
+        ),
+      })
+    }
+
+    // Elevation
+    if (streams?.altitude?.data?.length) {
+      result.push({
+        title: 'Höhenprofil',
+        ...buildChart(
+          'Höhe (m)',
+          streams.altitude.data.map((v, i) => ({ x: distLabels[i], y: Math.round(v) })),
+          '#6366f1',
+          'm ü. NN',
+          (v) => `${v} m`
+        ),
+      })
+    }
+
+    // Heart Rate
+    if (streams?.heartrate?.data?.length) {
+      result.push({
+        title: 'Herzschlag',
+        ...buildChart(
+          'bpm',
+          streams.heartrate.data.map((v, i) => ({ x: distLabels[i], y: Math.round(v) })),
+          '#ef4444',
+          'bpm',
+          (v) => `${v} bpm`
+        ),
+      })
+    }
+
+    // Cadence
+    if (streams?.cadence?.data?.length) {
+      result.push({
+        title: isRide ? 'Trittfrequenz' : 'Schrittfrequenz',
+        ...buildChart(
+          'rpm',
+          streams.cadence.data.map((v, i) => ({ x: distLabels[i], y: Math.round(v) })),
+          '#22c55e',
+          isRide ? 'rpm' : 'spm',
+          (v) => `${v}`
+        ),
+      })
+    }
+
+    return result
+  }, [streams, distLabels, isRide])
+
+  if (!charts.length) return null
+
+  const chartOpts = (opts) => ({
+    ...opts,
+    scales: {
+      ...opts.scales,
+      x: {
+        ...opts.scales.x,
+        labels: distLabels,
+      },
+    },
+  })
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6">
-      <h2 className="font-semibold text-gray-700 mb-4">Verlauf</h2>
-      <Line data={{ labels, datasets }} options={options} />
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {charts.map(({ title, data, options }) => (
+        <ChartCard key={title} title={title}>
+          <Line data={data} options={chartOpts(options)} />
+        </ChartCard>
+      ))}
     </div>
   )
 }

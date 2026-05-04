@@ -27,7 +27,7 @@ export const syncApi = {
 }
 
 export const statsApi = {
-  overview: () => api.get('/stats/overview'),
+  overview: (params) => api.get('/stats/overview', { params }),
   weekly: (params) => api.get('/stats/weekly', { params }),
 }
 
