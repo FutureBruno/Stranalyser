@@ -14,6 +14,12 @@ from app.services.strava_client import StravaClient, StravaAPIError
 logger = logging.getLogger(__name__)
 
 
+def _parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 def _map_activity(data: dict, athlete_id: int) -> dict:
     map_data = data.get("map") or {}
     start = data.get("start_latlng") or []
@@ -24,8 +30,8 @@ def _map_activity(data: dict, athlete_id: int) -> dict:
         "name": data.get("name"),
         "sport_type": data.get("sport_type"),
         "type": data.get("type"),
-        "start_date": data.get("start_date"),
-        "start_date_local": data.get("start_date_local"),
+        "start_date": _parse_dt(data.get("start_date")),
+        "start_date_local": _parse_dt(data.get("start_date_local")),
         "timezone": data.get("timezone"),
         "distance": data.get("distance"),
         "moving_time": data.get("moving_time"),
