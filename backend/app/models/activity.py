@@ -55,6 +55,7 @@ class Activity(Base):
 
     raw: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     streams_fetched: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    segments_fetched: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -63,6 +64,9 @@ class Activity(Base):
 
     athlete: Mapped["Athlete"] = relationship(back_populates="activities")
     streams: Mapped[list["ActivityStream"]] = relationship(
+        back_populates="activity", cascade="all, delete-orphan", lazy="select"
+    )
+    segment_efforts: Mapped[list["SegmentEffort"]] = relationship(
         back_populates="activity", cascade="all, delete-orphan", lazy="select"
     )
 

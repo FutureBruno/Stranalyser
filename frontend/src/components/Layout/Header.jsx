@@ -51,6 +51,9 @@ export default function Header() {
             <NavLink to="/activities" className={navClass}>
               Aktivitäten
             </NavLink>
+            <NavLink to="/segments" className={navClass}>
+              Segmente
+            </NavLink>
           </nav>
         </div>
 

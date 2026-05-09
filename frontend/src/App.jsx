@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage'
 import ActivitiesPage from './pages/ActivitiesPage'
 import ActivityPage from './pages/ActivityPage'
 import DashboardPage from './pages/DashboardPage'
+import SegmentsPage from './pages/SegmentsPage'
 
 function ProtectedRoute({ children }) {
   const { athlete, loading } = useAuthStore()
@@ -47,6 +48,7 @@ export default function App() {
           <Route index element={<DashboardPage />} />
           <Route path="activities" element={<ActivitiesPage />} />
           <Route path="activities/:id" element={<ActivityPage />} />
+          <Route path="segments" element={<SegmentsPage />} />
         </Route>
       </Routes>
     </BrowserRouter>
