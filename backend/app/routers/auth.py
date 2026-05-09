@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.athlete import Athlete
 from app.models.sync_state import SyncState
@@ -37,7 +38,7 @@ async def callback(
     db: AsyncSession = Depends(get_db),
 ):
     if error:
-        return RedirectResponse(url="/?error=strava_denied")
+        return RedirectResponse(url=f"{settings.frontend_url}/?error=strava_denied")
     if not code:
         raise HTTPException(status_code=400, detail="Missing code parameter")
 
@@ -81,7 +82,7 @@ async def callback(
     from app.tasks.sync_tasks import sync_all_activities
     sync_all_activities.delay(athlete_id)
 
-    return RedirectResponse(url="/")
+    return RedirectResponse(url=settings.frontend_url)
 
 
 @router.get("/me")
