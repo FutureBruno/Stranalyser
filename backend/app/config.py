@@ -15,18 +15,20 @@ class Settings(BaseSettings):
     # Strava OAuth
     strava_client_id: str = ""
     strava_client_secret: str = ""
-    strava_redirect_uri: str = "http://localhost:8080/api/auth/callback"
+    strava_redirect_uri: str = "http://localhost:8000/api/auth/callback"
+    frontend_url: str = "http://localhost:5173"
     strava_auth_url: str = "https://www.strava.com/oauth/authorize"
     strava_token_url: str = "https://www.strava.com/oauth/token"
     strava_api_base: str = "https://www.strava.com/api/v3"
 
-    # AI / Claude
-    anthropic_api_key: str = ""
+    # AI – Provider & Keys
+    ai_provider: str = "anthropic"
     ai_model: str = "claude-sonnet-4-6"
+    anthropic_api_key: str = ""
+    google_api_key: str = ""
 
     # App
     secret_key: str = "dev-secret-key-change-in-production"
-    app_port: int = 8080
     debug: bool = False
 
 
