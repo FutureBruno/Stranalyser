@@ -20,9 +20,11 @@ class Settings(BaseSettings):
     strava_token_url: str = "https://www.strava.com/oauth/token"
     strava_api_base: str = "https://www.strava.com/api/v3"
 
-    # AI / Claude
+    # AI – Provider & Keys
+    ai_provider: str = "anthropic"           # "anthropic" oder "google"
+    ai_model: str = "claude-sonnet-4-6"      # Modellname des aktiven Providers
     anthropic_api_key: str = ""
-    ai_model: str = "claude-sonnet-4-6"
+    google_api_key: str = ""
 
     # App
     secret_key: str = "dev-secret-key-change-in-production"
