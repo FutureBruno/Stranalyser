@@ -32,6 +32,7 @@ export const statsApi = {
 }
 
 export const aiApi = {
+  getProviders: () => api.get('/ai/providers'),
   generateWeeklyReport: (params) => api.post('/ai/weekly-report', null, { params }),
   getWeeklyReport: (params) => api.get('/ai/weekly-report', { params }),
   analyzeActivity: (id, params) => api.post(`/ai/activities/${id}/analyze`, null, { params }),
