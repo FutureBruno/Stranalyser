@@ -8,7 +8,9 @@ Lokale Strava-Aktivitäten-App mit Web-UI, KI-Analyse und Multi-Provider-Unterst
 - Vollständige Synchronisation aller historischen Aktivitäten
 - Automatischer Sync alle 5 Minuten (Celery Beat)
 - Aktivitätsliste mit Filter nach Sportart und Zeitraum
-- Detailseite mit Leaflet-Karte, Höhenprofil, Herzfrequenz, Leistungs- und Kadenz-Charts
+- Detailseite mit:
+  - Leaflet-Karte (OpenStreetMap) mit GPS-Route
+  - Charts für Höhenprofil, Herzfrequenz, Leistung, Kadenz
 - Dashboard mit Statistiken und wöchentlichem Distanz-Chart
 - **KI-Analyse** (Aktivität & Wochenbericht) via Anthropic Claude oder Google Gemini
 - **Modell-Auswahl** per Dropdown vor jeder KI-Anfrage
@@ -19,6 +21,8 @@ Lokale Strava-Aktivitäten-App mit Web-UI, KI-Analyse und Multi-Provider-Unterst
 ### 1. Strava-App erstellen
 
 Gehe zu https://www.strava.com/settings/api und erstelle eine neue App:
+- **App Name**: Stranalyser (beliebig)
+- **Website**: http://localhost
 - **Authorization Callback Domain**: `localhost` oder deine LAN-IP
 
 ### 2. Umgebungsvariablen konfigurieren
@@ -41,7 +45,7 @@ SECRET_KEY=zufälliger_langer_string
 
 # KI-Analyse (mindestens einen Key setzen)
 AI_PROVIDER=anthropic          # oder: google
-AI_MODEL=claude-sonnet-4-6     # oder: gemini-2.0-flash
+AI_MODEL=claude-sonnet-4-6     # oder z. B.: gemini-2.0-flash
 
 ANTHROPIC_API_KEY=sk-ant-...   # https://console.anthropic.com/settings/keys
 GOOGLE_API_KEY=AIza...         # https://aistudio.google.com/app/apikey
@@ -54,20 +58,26 @@ STRAVA_REDIRECT_URI=http://192.168.1.100:8080/api/auth/callback
 
 ### 3. Starten
 
+**Entwicklung** (kein nginx, hot-reload, direkte Ports):
 ```bash
 docker compose up --build
 ```
+- Frontend: http://localhost:5173
+- API:      http://localhost:8000
 
-Öffne http://localhost:8080
+**Produktion** (mit nginx als Reverse Proxy):
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+```
+- App: http://localhost:8080
 
 ---
 
 ## KI-Modell auswählen
 
-Das aktive Modell wird in `.env` konfiguriert. Im Frontend kann das Modell vor jeder Analyse per Dropdown gewechselt werden – ohne Neustart.
+Das aktive KI-Modell wird in `.env` konfiguriert. Im Frontend kann das Modell vor jeder Analyse per Dropdown gewechselt werden – ohne Neustart.
 
 **Anthropic Claude:**
-
 | Modell | Stärke | Geschwindigkeit |
 |--------|--------|----------------|
 | `claude-opus-4-7` | Höchste Qualität | Langsam |
@@ -75,7 +85,6 @@ Das aktive Modell wird in `.env` konfiguriert. Im Frontend kann das Modell vor j
 | `claude-haiku-4-5-20251001` | Günstig | Schnell |
 
 **Google Gemini:**
-
 | Modell | Stärke | Geschwindigkeit |
 |--------|--------|----------------|
 | `gemini-2.0-flash` | Günstig, schnell | Sehr schnell |
@@ -88,7 +97,7 @@ Das aktive Modell wird in `.env` konfiguriert. Im Frontend kann das Modell vor j
 ## Architektur
 
 ```
-nginx (Port 8080)
+nginx (Port 8080, nur Prod)
   ├── /     → frontend (React + Vite)
   └── /api  → api (FastAPI)
                 ├── db (PostgreSQL)
@@ -97,14 +106,14 @@ nginx (Port 8080)
 
 ## Services
 
-| Service  | Port (intern) | Beschreibung |
-|----------|--------------|---------------|
-| nginx    | 8080 (Host)  | Reverse Proxy |
-| api      | 8000         | FastAPI Backend |
-| frontend | 3000         | React SPA |
-| db       | 5432         | PostgreSQL |
-| redis    | 6379         | Celery Broker |
-| worker   | –            | Sync-Tasks (Celery + Beat) |
+| Service  | Dev-Port | Prod-Port | Beschreibung |
+|----------|----------|-----------|--------------|
+| nginx    | –        | 8080      | Reverse Proxy (nur Prod) |
+| api      | 8000     | intern    | FastAPI Backend |
+| frontend | 5173     | intern    | React SPA |
+| db       | –        | –         | PostgreSQL |
+| redis    | –        | –         | Celery Broker |
+| worker   | –        | –         | Sync-Tasks (Celery + Beat) |
 
 ## Dokumentation
 
