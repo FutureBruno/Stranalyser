@@ -13,4 +13,4 @@ services:
       - ./backend:/app
     command: >
       celery -A app.tasks.celery_app worker
-             -B --loglevel=debug -Q default,streams --concurrency=1
+             -B --loglevel=debug -Q default,streams,segments --concurrency=1
