@@ -39,6 +39,10 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://stranalyser:${DB_PASSWORD}@db:5432/stranalyser
       REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
     depends_on:
       db:
         condition: service_healthy
@@ -48,7 +52,7 @@ services:
       - stranalyser_net
     command: >
       sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   worker:
     build:
@@ -59,6 +63,8 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://stranalyser:${DB_PASSWORD}@db:5432/stranalyser
       REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./backend:/app
     depends_on:
       db:
         condition: service_healthy
@@ -68,28 +74,17 @@ services:
       - stranalyser_net
     command: >
       celery -A app.tasks.celery_app worker
-             -B
-             --loglevel=info
-             -Q default,streams
-             --concurrency=2
+             -B --loglevel=info -Q default,streams --concurrency=2
 
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
-    networks:
-      - stranalyser_net
-
-  nginx:
-    image: nginx:alpine
-    restart: unless-stopped
+      dockerfile: Dockerfile.dev
     ports:
-      - "${APP_PORT:-8080}:80"
+      - "5173:5173"
     volumes:
-      - ./nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      - api
-      - frontend
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
     networks:
       - stranalyser_net
 

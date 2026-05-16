@@ -1,7 +1,9 @@
-# Development-Overrides: hot-reload für backend und frontend
+# Dev-Overrides: hot-reload, direkte Ports, kein nginx
 # Wird automatisch von docker compose up geladen
 services:
   api:
+    ports:
+      - "8000:8000"
     volumes:
       - ./backend:/app
     command: >
@@ -14,3 +16,16 @@ services:
     command: >
       celery -A app.tasks.celery_app worker
              -B --loglevel=debug -Q default,streams --concurrency=1
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - VITE_POLL_INTERVAL=500

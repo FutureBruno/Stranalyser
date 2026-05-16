@@ -1,13 +1,14 @@
-from datetime import datetime, timezone
-from typing import Any
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, and_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.ai_analysis import AIAnalysis
 from app.models.athlete import Athlete
+from app.models.user_settings import UserSettings
 from app.routers.auth import require_athlete_id
 from app.services import ai_service
 
@@ -40,24 +41,68 @@ async def _get_athlete_name(db: AsyncSession, athlete_id: int) -> str:
     return " ".join(parts) if parts else (athlete.username or "Athlet")
 
 
+async def _get_user_keys(db: AsyncSession, athlete_id: int) -> tuple[str | None, str | None]:
+    """Return (anthropic_key, google_key) from user settings, falling back to env."""
+    row = await db.get(UserSettings, athlete_id)
+    anthropic_key = (row.anthropic_api_key if row else None) or settings.anthropic_api_key or None
+    google_key = (row.google_api_key if row else None) or settings.google_api_key or None
+    return anthropic_key, google_key
+
+
+async def _get_user_preferred(db: AsyncSession, athlete_id: int) -> tuple[str | None, str | None]:
+    """Return (preferred_provider, preferred_model) from user settings."""
+    row = await db.get(UserSettings, athlete_id)
+    if not row:
+        return None, None
+    return row.preferred_provider, row.preferred_model
+
+
+def _check_provider(provider: str, anthropic_key: str | None, google_key: str | None) -> None:
+    if provider == "google" and not google_key:
+        raise HTTPException(status_code=503, detail="Google API-Key ist nicht konfiguriert.")
+    if provider == "anthropic" and not anthropic_key:
+        raise HTTPException(status_code=503, detail="Anthropic API-Key ist nicht konfiguriert.")
+    if provider not in ("anthropic", "google"):
+        raise HTTPException(status_code=400, detail=f"Unbekannter Provider: '{provider}'. Erlaubt: anthropic, google")
+
+
+@router.get("/providers")
+async def get_providers(
+    athlete_id: int = Depends(require_athlete_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return available AI providers, models and configuration status."""
+    anthropic_key, google_key = await _get_user_keys(db, athlete_id)
+    pref_provider, pref_model = await _get_user_preferred(db, athlete_id)
+    info = ai_service.get_providers_info(
+        user_anthropic_key=anthropic_key,
+        user_google_key=google_key,
+    )
+    if pref_provider:
+        info["current_provider"] = pref_provider
+    if pref_model:
+        info["current_model"] = pref_model
+    return info
+
+
 @router.post("/weekly-report")
 async def create_weekly_report(
     athlete_id: int = Depends(require_athlete_id),
     db: AsyncSession = Depends(get_db),
     week_offset: int = Query(0, description="0 = aktuelle Woche, -1 = letzte Woche"),
     force_refresh: bool = Query(False, description="Existierende Analyse überschreiben"),
+    model: str | None = Query(None, description="Modell überschreiben, z.B. gemini-2.0-flash"),
+    provider: str | None = Query(None, description="Provider überschreiben: anthropic oder google"),
 ) -> dict:
     """Generate (or return cached) weekly AI report."""
-    if not __import__("app.config", fromlist=["settings"]).settings.anthropic_api_key:
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY ist nicht konfiguriert.")
-
+    anthropic_key, google_key = await _get_user_keys(db, athlete_id)
+    pref_provider, pref_model = await _get_user_preferred(db, athlete_id)
+    effective_provider = provider or pref_provider or settings.ai_provider
+    effective_model = model or pref_model or settings.ai_model
+    _check_provider(effective_provider, anthropic_key, google_key)
     athlete_name = await _get_athlete_name(db, athlete_id)
 
-    # For force_refresh we need to skip cache — handled in service via force logic
-    # Simple approach: if force_refresh, temporarily pass a flag via service
     if force_refresh:
-        # Temporarily set to force by computing week_key and deleting existing
-        from datetime import timedelta
         now = datetime.now(timezone.utc)
         days_since_monday = now.weekday()
         week_start = (now - timedelta(days=days_since_monday + week_offset * 7)).replace(
@@ -83,6 +128,10 @@ async def create_weekly_report(
             athlete_id=athlete_id,
             athlete_name=athlete_name,
             week_offset=week_offset,
+            model=effective_model,
+            provider=effective_provider,
+            user_anthropic_key=anthropic_key,
+            user_google_key=google_key,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -98,11 +147,15 @@ async def analyze_activity(
     athlete_id: int = Depends(require_athlete_id),
     db: AsyncSession = Depends(get_db),
     force_refresh: bool = Query(False, description="Existierende Analyse überschreiben"),
+    model: str | None = Query(None, description="Modell überschreiben, z.B. claude-opus-4-7"),
+    provider: str | None = Query(None, description="Provider überschreiben: anthropic oder google"),
 ) -> dict:
     """Generate (or return cached) AI analysis for a single activity."""
-    if not __import__("app.config", fromlist=["settings"]).settings.anthropic_api_key:
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY ist nicht konfiguriert.")
-
+    anthropic_key, google_key = await _get_user_keys(db, athlete_id)
+    pref_provider, pref_model = await _get_user_preferred(db, athlete_id)
+    effective_provider = provider or pref_provider or settings.ai_provider
+    effective_model = model or pref_model or settings.ai_model
+    _check_provider(effective_provider, anthropic_key, google_key)
     athlete_name = await _get_athlete_name(db, athlete_id)
 
     try:
@@ -112,6 +165,10 @@ async def analyze_activity(
             athlete_name=athlete_name,
             activity_id=activity_id,
             force_refresh=force_refresh,
+            model=effective_model,
+            provider=effective_provider,
+            user_anthropic_key=anthropic_key,
+            user_google_key=google_key,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -183,7 +240,7 @@ async def list_analyses(
     per_page: int = Query(20, ge=1, le=100),
 ) -> dict:
     """List all stored AI analyses for the athlete."""
-    from sqlalchemy import func, and_
+    from sqlalchemy import func
 
     filters = [AIAnalysis.athlete_id == athlete_id]
     if analysis_type:

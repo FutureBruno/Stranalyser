@@ -32,11 +32,17 @@ export const statsApi = {
 }
 
 export const aiApi = {
+  getProviders: () => api.get('/ai/providers'),
   generateWeeklyReport: (params) => api.post('/ai/weekly-report', null, { params }),
   getWeeklyReport: (params) => api.get('/ai/weekly-report', { params }),
   analyzeActivity: (id, params) => api.post(`/ai/activities/${id}/analyze`, null, { params }),
   getActivityAnalysis: (id) => api.get(`/ai/activities/${id}/analysis`),
   listAnalyses: (params) => api.get('/ai/analyses', { params }),
+}
+
+export const settingsApi = {
+  get: () => api.get('/settings'),
+  update: (data) => api.put('/settings', data),
 }
 
 export default api

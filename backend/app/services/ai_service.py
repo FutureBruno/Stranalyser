@@ -1,5 +1,6 @@
-"""AI analysis service using Claude API."""
+"""AI analysis service – supports Anthropic (Claude) and Google (Gemini)."""
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -14,6 +15,149 @@ from app.models.ai_analysis import AIAnalysis
 
 RIDE_TYPES = {"Ride", "MountainBikeRide", "GravelRide", "EBikeRide", "EMountainBikeRide"}
 
+# Fallback-Listen falls die Provider-API nicht erreichbar ist
+ANTHROPIC_MODELS_FALLBACK = ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
+GOOGLE_MODELS_FALLBACK = ["gemini-2.5-flash"]
+
+# Map deprecated model IDs to their current replacements
+_GOOGLE_MODEL_ALIASES: dict[str, str] = {
+    "gemini-2.0-flash": "gemini-2.5-flash",
+    "gemini-2.0-flash-001": "gemini-2.5-flash",
+    "gemini-1.5-flash": "gemini-2.0-flash-lite",
+    "gemini-1.5-flash-001": "gemini-2.0-flash-lite",
+    "gemini-1.5-pro": "gemini-2.5-pro",
+    "gemini-1.5-pro-001": "gemini-2.5-pro",
+}
+
+# Exclude non-text-generation model families by name substring
+_GOOGLE_EXCLUDE = {
+    "embedding", "imagen", "veo", "aqa", "tts", "audio",
+    "lyria", "robotics", "deep-research", "computer-use",
+    "clip", "gemma", "nano-banana",
+}
+
+_model_cache: dict[str, tuple[list[str], float]] = {}
+_CACHE_TTL = 600  # 10 Minuten
+
+
+def _fetch_anthropic_models(api_key: str | None = None) -> list[str]:
+    key = api_key or settings.anthropic_api_key
+    if not key:
+        return ANTHROPIC_MODELS_FALLBACK
+    cache_key = f"anthropic:{key[:12]}"
+    now = time.time()
+    if cache_key in _model_cache:
+        models, ts = _model_cache[cache_key]
+        if now - ts < _CACHE_TTL:
+            return models
+    try:
+        client = anthropic.Anthropic(api_key=key)
+        page = client.models.list(limit=100)
+        models = sorted(
+            [m.id for m in page.data],
+            key=lambda x: x,
+        )
+        if models:
+            _model_cache[cache_key] = (models, now)
+            return models
+    except Exception:
+        pass
+    return ANTHROPIC_MODELS_FALLBACK
+
+
+def _fetch_google_models(api_key: str | None = None) -> list[str]:
+    key = api_key or settings.google_api_key
+    if not key:
+        return GOOGLE_MODELS_FALLBACK
+    cache_key = f"google:{key[:12]}"
+    now = time.time()
+    if cache_key in _model_cache:
+        models, ts = _model_cache[cache_key]
+        if now - ts < _CACHE_TTL:
+            return models
+    try:
+        from google import genai
+        client = genai.Client(api_key=key)
+        models = []
+        for m in client.models.list():
+            name = m.name.removeprefix("models/")
+            # Keep only text-generation Gemini models; skip embeddings, TTS, video, etc.
+            if not name.startswith("gemini-"):
+                continue
+            if any(excl in name for excl in _GOOGLE_EXCLUDE):
+                continue
+            models.append(name)
+        models.sort()
+        if models:
+            _model_cache[cache_key] = (models, now)
+            return models
+    except Exception:
+        pass
+    return GOOGLE_MODELS_FALLBACK
+
+
+# ---------------------------------------------------------------------------
+# Provider abstraction
+# ---------------------------------------------------------------------------
+
+def _call_anthropic(prompt: str, model: str, max_tokens: int, api_key: str | None = None) -> tuple[str, dict, str]:
+    key = api_key or settings.anthropic_api_key
+    if not key:
+        raise ValueError("ANTHROPIC_API_KEY ist nicht konfiguriert.")
+    client = anthropic.Anthropic(api_key=key)
+    message = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    usage = {
+        "input_tokens": message.usage.input_tokens,
+        "output_tokens": message.usage.output_tokens,
+    }
+    return message.content[0].text.strip(), usage, message.model
+
+
+def _call_google(prompt: str, model: str, max_tokens: int, api_key: str | None = None) -> tuple[str, dict, str]:
+    key = api_key or settings.google_api_key
+    if not key:
+        raise ValueError("GOOGLE_API_KEY ist nicht konfiguriert.")
+    model = _GOOGLE_MODEL_ALIASES.get(model, model)
+    from google import genai
+    from google.genai import types as genai_types
+    client = genai.Client(api_key=key)
+    response = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=genai_types.GenerateContentConfig(max_output_tokens=max_tokens),
+    )
+    meta = response.usage_metadata
+    usage = {
+        "input_tokens": meta.prompt_token_count if meta else None,
+        "output_tokens": meta.candidates_token_count if meta else None,
+    }
+    return response.text.strip(), usage, model
+
+
+def _call_ai(
+    prompt: str,
+    model: str | None,
+    provider: str | None,
+    max_tokens: int,
+    user_anthropic_key: str | None = None,
+    user_google_key: str | None = None,
+) -> tuple[str, dict, str]:
+    """Route to the correct provider and return (text, usage_dict, model_name)."""
+    effective_provider = provider or settings.ai_provider
+    effective_model = model or settings.ai_model
+
+    if effective_provider == "google":
+        return _call_google(prompt, effective_model, max_tokens, api_key=user_google_key)
+    return _call_anthropic(prompt, effective_model, max_tokens, api_key=user_anthropic_key)
+
+
+# ---------------------------------------------------------------------------
+# Formatting helpers
+# ---------------------------------------------------------------------------
 
 def _sport_label(sport_type: str | None) -> str:
     if not sport_type:
@@ -91,18 +235,16 @@ def _activity_to_dict(a: Activity) -> dict[str, str]:
     }
 
 
-def _get_client() -> anthropic.Anthropic:
-    if not settings.anthropic_api_key:
-        raise ValueError("ANTHROPIC_API_KEY ist nicht konfiguriert.")
-    return anthropic.Anthropic(api_key=settings.anthropic_api_key)
-
+# ---------------------------------------------------------------------------
+# Persistence
+# ---------------------------------------------------------------------------
 
 async def _save_analysis(
     db: AsyncSession,
     athlete_id: int,
     analysis_type: str,
     content: dict[str, Any],
-    usage: Any,
+    usage: dict,
     model: str,
     activity_id: int | None = None,
     week_key: str | None = None,
@@ -113,8 +255,8 @@ async def _save_analysis(
         activity_id=activity_id,
         week_key=week_key,
         content=content,
-        input_tokens=usage.input_tokens if usage else None,
-        output_tokens=usage.output_tokens if usage else None,
+        input_tokens=usage.get("input_tokens"),
+        output_tokens=usage.get("output_tokens"),
         model=model,
     )
     db.add(analysis)
@@ -123,15 +265,33 @@ async def _save_analysis(
     return analysis
 
 
+def _parse_json_response(raw_text: str) -> dict:
+    text = raw_text
+    if text.startswith("```"):
+        lines = text.split("\n")
+        text = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {"raw": text, "fehler": "Antwort konnte nicht als JSON geparst werden."}
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
 async def generate_weekly_report(
     db: AsyncSession,
     athlete_id: int,
     athlete_name: str,
     week_offset: int = 0,
+    model: str | None = None,
+    provider: str | None = None,
+    user_anthropic_key: str | None = None,
+    user_google_key: str | None = None,
 ) -> AIAnalysis:
     """Generate AI weekly report. week_offset=0 is current week, -1 is last week."""
     now = datetime.now(timezone.utc)
-    # Monday of target week
     days_since_monday = now.weekday()
     week_start = (now - timedelta(days=days_since_monday + week_offset * 7)).replace(
         hour=0, minute=0, second=0, microsecond=0
@@ -139,7 +299,6 @@ async def generate_weekly_report(
     week_end = week_start + timedelta(days=7)
     week_key = week_start.strftime("%Y-W%W")
 
-    # Check if we already have a report for this week
     existing = await db.execute(
         select(AIAnalysis).where(
             and_(
@@ -153,7 +312,6 @@ async def generate_weekly_report(
     if existing_analysis:
         return existing_analysis
 
-    # Fetch this week's activities
     stmt = (
         select(Activity)
         .where(
@@ -168,7 +326,6 @@ async def generate_weekly_report(
     result = await db.execute(stmt)
     week_activities = result.scalars().all()
 
-    # Fetch previous 4 weeks for comparison
     prev_start = week_start - timedelta(weeks=4)
     prev_stmt = (
         select(Activity)
@@ -184,7 +341,6 @@ async def generate_weekly_report(
     prev_result = await db.execute(prev_stmt)
     prev_activities = prev_result.scalars().all()
 
-    # Build prompt context
     week_data = [_activity_to_dict(a) for a in week_activities]
     prev_data = [_activity_to_dict(a) for a in prev_activities]
 
@@ -226,31 +382,20 @@ Wichtig:
 - Schreibe natürlich und motivierend, nicht zu technisch
 """
 
-    client = _get_client()
-    message = client.messages.create(
-        model=settings.ai_model,
-        max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}],
+    text, usage, model_used = _call_ai(
+        prompt, model, provider, max_tokens=2000,
+        user_anthropic_key=user_anthropic_key,
+        user_google_key=user_google_key,
     )
-
-    raw_text = message.content[0].text.strip()
-    # Extract JSON if wrapped in code block
-    if raw_text.startswith("```"):
-        lines = raw_text.split("\n")
-        raw_text = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
-
-    try:
-        parsed = json.loads(raw_text)
-    except json.JSONDecodeError:
-        parsed = {"raw": raw_text, "fehler": "Antwort konnte nicht als JSON geparst werden."}
+    parsed = _parse_json_response(text)
 
     return await _save_analysis(
         db=db,
         athlete_id=athlete_id,
         analysis_type="weekly_report",
         content=parsed,
-        usage=message.usage,
-        model=message.model,
+        usage=usage,
+        model=model_used,
         week_key=week_key,
     )
 
@@ -261,14 +406,16 @@ async def analyze_activity(
     athlete_name: str,
     activity_id: int,
     force_refresh: bool = False,
+    model: str | None = None,
+    provider: str | None = None,
+    user_anthropic_key: str | None = None,
+    user_google_key: str | None = None,
 ) -> AIAnalysis:
     """Analyze a single activity and compare with recent same-type activities."""
-    # Load the activity
     activity = await db.get(Activity, activity_id)
     if not activity or activity.athlete_id != athlete_id:
         raise ValueError("Aktivität nicht gefunden.")
 
-    # Check for existing analysis (unless forced)
     if not force_refresh:
         existing = await db.execute(
             select(AIAnalysis).where(
@@ -283,7 +430,6 @@ async def analyze_activity(
         if existing_analysis:
             return existing_analysis
 
-    # Fetch the last 10 activities of the same sport type before this one
     sport_types = list(RIDE_TYPES) if activity.sport_type in RIDE_TYPES else [activity.sport_type]
     prev_stmt = (
         select(Activity)
@@ -303,7 +449,6 @@ async def analyze_activity(
 
     current_data = _activity_to_dict(activity)
     prev_data = [_activity_to_dict(a) for a in prev_activities]
-
     sport_label = _sport_label(activity.sport_type)
 
     prompt = f"""Du bist ein erfahrener Trainingscoach und analysierst eine Aktivität von {athlete_name}.
@@ -342,29 +487,42 @@ Wichtig:
 - Schreibe auf Deutsch
 """
 
-    client = _get_client()
-    message = client.messages.create(
-        model=settings.ai_model,
-        max_tokens=1500,
-        messages=[{"role": "user", "content": prompt}],
+    text, usage, model_used = _call_ai(
+        prompt, model, provider, max_tokens=1500,
+        user_anthropic_key=user_anthropic_key,
+        user_google_key=user_google_key,
     )
-
-    raw_text = message.content[0].text.strip()
-    if raw_text.startswith("```"):
-        lines = raw_text.split("\n")
-        raw_text = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
-
-    try:
-        parsed = json.loads(raw_text)
-    except json.JSONDecodeError:
-        parsed = {"raw": raw_text, "fehler": "Antwort konnte nicht als JSON geparst werden."}
+    parsed = _parse_json_response(text)
 
     return await _save_analysis(
         db=db,
         athlete_id=athlete_id,
         analysis_type="activity_analysis",
         content=parsed,
-        usage=message.usage,
-        model=message.model,
+        usage=usage,
+        model=model_used,
         activity_id=activity_id,
     )
+
+
+def get_providers_info(
+    user_anthropic_key: str | None = None,
+    user_google_key: str | None = None,
+) -> dict:
+    """Return available providers with dynamically fetched model lists."""
+    anthropic_key = user_anthropic_key or settings.anthropic_api_key or None
+    google_key = user_google_key or settings.google_api_key or None
+    return {
+        "current_provider": settings.ai_provider,
+        "current_model": settings.ai_model,
+        "providers": {
+            "anthropic": {
+                "configured": bool(anthropic_key),
+                "models": _fetch_anthropic_models(anthropic_key),
+            },
+            "google": {
+                "configured": bool(google_key),
+                "models": _fetch_google_models(google_key),
+            },
+        },
+    }
