@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import settings
-from app.routers import auth, activities, sync, stats, ai, settings
+from app.routers import auth, activities, sync, stats, ai
+from app.routers import settings as settings_router
 
 app = FastAPI(
     title="Stranalyser API",
@@ -33,7 +34,7 @@ app.include_router(activities.router, prefix="/api")
 app.include_router(sync.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
-app.include_router(settings.router, prefix="/api")
+app.include_router(settings_router.router, prefix="/api")
 
 
 @app.get("/api/health")
