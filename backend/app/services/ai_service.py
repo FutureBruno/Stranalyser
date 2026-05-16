@@ -1,5 +1,6 @@
 """AI analysis service – supports Anthropic (Claude) and Google (Gemini)."""
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -14,18 +15,66 @@ from app.models.ai_analysis import AIAnalysis
 
 RIDE_TYPES = {"Ride", "MountainBikeRide", "GravelRide", "EBikeRide", "EMountainBikeRide"}
 
-ANTHROPIC_MODELS = [
-    "claude-opus-4-7",
-    "claude-sonnet-4-6",
-    "claude-haiku-4-5-20251001",
-]
+# Fallback-Listen falls die Provider-API nicht erreichbar ist
+ANTHROPIC_MODELS_FALLBACK = ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
+GOOGLE_MODELS_FALLBACK = ["gemini-2.0-flash"]
 
-GOOGLE_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-thinking-exp",
-    "gemini-1.5-pro",
-    "gemini-1.5-flash",
-]
+_model_cache: dict[str, tuple[list[str], float]] = {}
+_CACHE_TTL = 600  # 10 Minuten
+
+
+def _fetch_anthropic_models(api_key: str | None = None) -> list[str]:
+    key = api_key or settings.anthropic_api_key
+    if not key:
+        return ANTHROPIC_MODELS_FALLBACK
+    cache_key = f"anthropic:{key[:12]}"
+    now = time.time()
+    if cache_key in _model_cache:
+        models, ts = _model_cache[cache_key]
+        if now - ts < _CACHE_TTL:
+            return models
+    try:
+        client = anthropic.Anthropic(api_key=key)
+        page = client.models.list(limit=100)
+        models = sorted(
+            [m.id for m in page.data],
+            key=lambda x: x,
+        )
+        if models:
+            _model_cache[cache_key] = (models, now)
+            return models
+    except Exception:
+        pass
+    return ANTHROPIC_MODELS_FALLBACK
+
+
+def _fetch_google_models(api_key: str | None = None) -> list[str]:
+    key = api_key or settings.google_api_key
+    if not key:
+        return GOOGLE_MODELS_FALLBACK
+    cache_key = f"google:{key[:12]}"
+    now = time.time()
+    if cache_key in _model_cache:
+        models, ts = _model_cache[cache_key]
+        if now - ts < _CACHE_TTL:
+            return models
+    try:
+        from google import genai
+        client = genai.Client(api_key=key)
+        models = []
+        for m in client.models.list():
+            methods = getattr(m, "supported_generation_methods", None) or []
+            if "generateContent" not in methods:
+                continue
+            name = m.name.removeprefix("models/")
+            models.append(name)
+        models.sort()
+        if models:
+            _model_cache[cache_key] = (models, now)
+            return models
+    except Exception:
+        pass
+    return GOOGLE_MODELS_FALLBACK
 
 
 # ---------------------------------------------------------------------------
@@ -436,19 +485,24 @@ Wichtig:
     )
 
 
-def get_providers_info() -> dict:
-    """Return available providers, their models and configuration status."""
+def get_providers_info(
+    user_anthropic_key: str | None = None,
+    user_google_key: str | None = None,
+) -> dict:
+    """Return available providers with dynamically fetched model lists."""
+    anthropic_key = user_anthropic_key or settings.anthropic_api_key or None
+    google_key = user_google_key or settings.google_api_key or None
     return {
         "current_provider": settings.ai_provider,
         "current_model": settings.ai_model,
         "providers": {
             "anthropic": {
-                "configured": bool(settings.anthropic_api_key),
-                "models": ANTHROPIC_MODELS,
+                "configured": bool(anthropic_key),
+                "models": _fetch_anthropic_models(anthropic_key),
             },
             "google": {
-                "configured": bool(settings.google_api_key),
-                "models": GOOGLE_MODELS,
+                "configured": bool(google_key),
+                "models": _fetch_google_models(google_key),
             },
         },
     }

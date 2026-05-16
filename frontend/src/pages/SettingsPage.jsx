@@ -1,17 +1,15 @@
 import { useState, useEffect } from 'react'
 import { settingsApi } from '../api/client'
 
-const PROVIDERS = {
+const PROVIDER_META = {
   anthropic: {
     label: 'Anthropic (Claude)',
-    models: ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
     keyLabel: 'Anthropic API-Key',
     keyPlaceholder: 'sk-ant-…',
     docsUrl: 'https://console.anthropic.com/settings/keys',
   },
   google: {
     label: 'Google (Gemini)',
-    models: ['gemini-2.0-flash', 'gemini-2.0-flash-thinking-exp', 'gemini-1.5-pro', 'gemini-1.5-flash'],
     keyLabel: 'Google API-Key',
     keyPlaceholder: 'AIza…',
     docsUrl: 'https://aistudio.google.com/app/apikey',
@@ -77,6 +75,7 @@ export default function SettingsPage() {
   const [hasGoogleKey, setHasGoogleKey] = useState(false)
   const [preferredProvider, setPreferredProvider] = useState('')
   const [preferredModel, setPreferredModel] = useState('')
+  const [availableProviders, setAvailableProviders] = useState({})
 
   useEffect(() => {
     settingsApi.get()
@@ -85,6 +84,7 @@ export default function SettingsPage() {
         setHasGoogleKey(data.has_google_key)
         setPreferredProvider(data.preferred_provider || '')
         setPreferredModel(data.preferred_model || '')
+        setAvailableProviders(data.available_providers || {})
       })
       .catch(() => setError('Einstellungen konnten nicht geladen werden.'))
       .finally(() => setLoading(false))
@@ -117,6 +117,9 @@ export default function SettingsPage() {
       setAnthropicKey('')
       setGoogleKey('')
       setSaved(true)
+      // Modelle neu laden (Keys könnten sich geändert haben)
+      const { data: fresh } = await settingsApi.get()
+      setAvailableProviders(fresh.available_providers || {})
       setTimeout(() => setSaved(false), 3000)
     } catch {
       setError('Speichern fehlgeschlagen. Bitte versuche es erneut.')
@@ -138,12 +141,16 @@ export default function SettingsPage() {
         setHasGoogleKey(false)
         setGoogleKey('')
       }
+      const { data: fresh } = await settingsApi.get()
+      setAvailableProviders(fresh.available_providers || {})
     } catch {
       setError('Löschen fehlgeschlagen.')
     }
   }
 
-  const availableModels = preferredProvider ? PROVIDERS[preferredProvider]?.models ?? [] : []
+  const availableModels = preferredProvider
+    ? (availableProviders[preferredProvider]?.models ?? [])
+    : []
 
   if (loading) {
     return (
@@ -168,53 +175,32 @@ export default function SettingsPage() {
             </p>
           </div>
 
-          {/* Anthropic */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-800">Anthropic (Claude)</span>
-              <a
-                href={PROVIDERS.anthropic.docsUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-strava-orange hover:underline"
-              >
-                API-Key erstellen ↗
-              </a>
+          {Object.entries(PROVIDER_META).map(([key, meta], i) => (
+            <div key={key}>
+              {i > 0 && <hr className="border-gray-100 mb-6" />}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-800">{meta.label}</span>
+                  <a
+                    href={meta.docsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-strava-orange hover:underline"
+                  >
+                    API-Key erstellen ↗
+                  </a>
+                </div>
+                <KeyField
+                  label={meta.keyLabel}
+                  placeholder={meta.keyPlaceholder}
+                  value={key === 'anthropic' ? anthropicKey : googleKey}
+                  hasKey={key === 'anthropic' ? hasAnthropicKey : hasGoogleKey}
+                  onChange={key === 'anthropic' ? setAnthropicKey : setGoogleKey}
+                  onClear={() => handleClearKey(key)}
+                />
+              </div>
             </div>
-            <KeyField
-              label={PROVIDERS.anthropic.keyLabel}
-              placeholder={PROVIDERS.anthropic.keyPlaceholder}
-              value={anthropicKey}
-              hasKey={hasAnthropicKey}
-              onChange={setAnthropicKey}
-              onClear={() => handleClearKey('anthropic')}
-            />
-          </div>
-
-          <hr className="border-gray-100" />
-
-          {/* Google */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-800">Google (Gemini)</span>
-              <a
-                href={PROVIDERS.google.docsUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-strava-orange hover:underline"
-              >
-                API-Key erstellen ↗
-              </a>
-            </div>
-            <KeyField
-              label={PROVIDERS.google.keyLabel}
-              placeholder={PROVIDERS.google.keyPlaceholder}
-              value={googleKey}
-              hasKey={hasGoogleKey}
-              onChange={setGoogleKey}
-              onClear={() => handleClearKey('google')}
-            />
-          </div>
+          ))}
         </section>
 
         {/* Default Provider & Model */}
@@ -229,7 +215,7 @@ export default function SettingsPage() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Anbieter</label>
             <div className="flex gap-3">
-              {Object.entries(PROVIDERS).map(([key, { label }]) => (
+              {Object.entries(PROVIDER_META).map(([key, { label }]) => (
                 <button
                   key={key}
                   type="button"
@@ -255,19 +241,32 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {preferredProvider && availableModels.length > 0 && (
+          {preferredProvider && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Modell</label>
-              <select
-                value={preferredModel}
-                onChange={(e) => setPreferredModel(e.target.value)}
-                className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-strava-orange bg-white"
-              >
-                <option value="">— Standardmodell des Anbieters —</option>
-                {availableModels.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Modell
+                {availableModels.length > 0 && (
+                  <span className="ml-2 text-xs text-gray-400 font-normal">
+                    ({availableModels.length} verfügbar)
+                  </span>
+                )}
+              </label>
+              {availableModels.length > 0 ? (
+                <select
+                  value={preferredModel}
+                  onChange={(e) => setPreferredModel(e.target.value)}
+                  className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-strava-orange bg-white"
+                >
+                  <option value="">— Standardmodell des Anbieters —</option>
+                  {availableModels.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-xs text-gray-400">
+                  Kein API-Key hinterlegt — Modelle werden nach dem Speichern geladen.
+                </p>
+              )}
             </div>
           )}
         </section>
