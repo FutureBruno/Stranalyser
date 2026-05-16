@@ -17,13 +17,23 @@ RIDE_TYPES = {"Ride", "MountainBikeRide", "GravelRide", "EBikeRide", "EMountainB
 
 # Fallback-Listen falls die Provider-API nicht erreichbar ist
 ANTHROPIC_MODELS_FALLBACK = ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
-GOOGLE_MODELS_FALLBACK = ["gemini-2.0-flash-001"]
+GOOGLE_MODELS_FALLBACK = ["gemini-2.5-flash"]
 
 # Map deprecated model IDs to their current replacements
 _GOOGLE_MODEL_ALIASES: dict[str, str] = {
-    "gemini-2.0-flash": "gemini-2.0-flash-001",
-    "gemini-1.5-flash": "gemini-1.5-flash-001",
-    "gemini-1.5-pro": "gemini-1.5-pro-001",
+    "gemini-2.0-flash": "gemini-2.5-flash",
+    "gemini-2.0-flash-001": "gemini-2.5-flash",
+    "gemini-1.5-flash": "gemini-2.0-flash-lite",
+    "gemini-1.5-flash-001": "gemini-2.0-flash-lite",
+    "gemini-1.5-pro": "gemini-2.5-pro",
+    "gemini-1.5-pro-001": "gemini-2.5-pro",
+}
+
+# Exclude non-text-generation model families by name substring
+_GOOGLE_EXCLUDE = {
+    "embedding", "imagen", "veo", "aqa", "tts", "audio",
+    "lyria", "robotics", "deep-research", "computer-use",
+    "clip", "gemma", "nano-banana",
 }
 
 _model_cache: dict[str, tuple[list[str], float]] = {}
@@ -70,10 +80,12 @@ def _fetch_google_models(api_key: str | None = None) -> list[str]:
         client = genai.Client(api_key=key)
         models = []
         for m in client.models.list():
-            methods = getattr(m, "supported_generation_methods", None) or []
-            if "generateContent" not in methods:
-                continue
             name = m.name.removeprefix("models/")
+            # Keep only text-generation Gemini models; skip embeddings, TTS, video, etc.
+            if not name.startswith("gemini-"):
+                continue
+            if any(excl in name for excl in _GOOGLE_EXCLUDE):
+                continue
             models.append(name)
         models.sort()
         if models:
