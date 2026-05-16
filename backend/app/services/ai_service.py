@@ -17,7 +17,14 @@ RIDE_TYPES = {"Ride", "MountainBikeRide", "GravelRide", "EBikeRide", "EMountainB
 
 # Fallback-Listen falls die Provider-API nicht erreichbar ist
 ANTHROPIC_MODELS_FALLBACK = ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
-GOOGLE_MODELS_FALLBACK = ["gemini-2.0-flash"]
+GOOGLE_MODELS_FALLBACK = ["gemini-2.0-flash-001"]
+
+# Map deprecated model IDs to their current replacements
+_GOOGLE_MODEL_ALIASES: dict[str, str] = {
+    "gemini-2.0-flash": "gemini-2.0-flash-001",
+    "gemini-1.5-flash": "gemini-1.5-flash-001",
+    "gemini-1.5-pro": "gemini-1.5-pro-001",
+}
 
 _model_cache: dict[str, tuple[list[str], float]] = {}
 _CACHE_TTL = 600  # 10 Minuten
@@ -102,6 +109,7 @@ def _call_google(prompt: str, model: str, max_tokens: int, api_key: str | None =
     key = api_key or settings.google_api_key
     if not key:
         raise ValueError("GOOGLE_API_KEY ist nicht konfiguriert.")
+    model = _GOOGLE_MODEL_ALIASES.get(model, model)
     from google import genai
     from google.genai import types as genai_types
     client = genai.Client(api_key=key)
