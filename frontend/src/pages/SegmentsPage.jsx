@@ -4,6 +4,7 @@ import { MapContainer, TileLayer, Polyline, CircleMarker, useMap } from 'react-l
 import { segmentsApi } from '../api/client'
 
 const RUN_TYPES = new Set(['Run', 'TrailRun', 'Walk', 'Hike'])
+const RIDE_TYPES = new Set(['Ride', 'MountainBikeRide', 'GravelRide', 'EBikeRide', 'EMountainBikeRide', 'VirtualRide'])
 
 function formatTime(seconds) {
   if (!seconds) return '–'
@@ -20,6 +21,11 @@ function formatPace(seconds, meters) {
   const m = Math.floor(secPerKm / 60)
   const s = Math.round(secPerKm % 60)
   return `${m}:${String(s).padStart(2, '0')} /km`
+}
+
+function formatSpeed(seconds, meters) {
+  if (!seconds || !meters) return '–'
+  return `${((meters / seconds) * 3.6).toFixed(1)} km/h`
 }
 
 function formatDistance(meters) {
@@ -99,6 +105,7 @@ function SegmentCard({ segment }) {
   const [open, setOpen] = useState(false)
   const [showMap, setShowMap] = useState(false)
   const isRun = RUN_TYPES.has(segment.sport_type)
+  const isRide = RIDE_TYPES.has(segment.sport_type)
   const hasMap = segment.polyline || segment.start_latlng
 
   return (
@@ -116,6 +123,11 @@ function SegmentCard({ segment }) {
               {isRun && segment.best_elapsed_time && segment.distance && (
                 <span className="text-strava-orange font-medium">
                   {formatPace(segment.best_elapsed_time, segment.distance)}
+                </span>
+              )}
+              {isRide && segment.best_elapsed_time && segment.distance && (
+                <span className="text-strava-orange font-medium">
+                  {formatSpeed(segment.best_elapsed_time, segment.distance)}
                 </span>
               )}
               {segment.avg_elapsed_time && (
@@ -171,6 +183,7 @@ function SegmentCard({ segment }) {
                 <th className="text-left px-4 py-2">Datum</th>
                 <th className="text-right px-4 py-2">Zeit</th>
                 {isRun && <th className="text-right px-4 py-2">Pace</th>}
+                {isRide && <th className="text-right px-4 py-2">km/h</th>}
                 {segment.efforts.some(e => e.average_heartrate) && (
                   <th className="text-right px-4 py-2">Ø HR</th>
                 )}
@@ -195,6 +208,11 @@ function SegmentCard({ segment }) {
                   {isRun && (
                     <td className="px-4 py-2 text-right font-mono text-gray-600">
                       {formatPace(effort.elapsed_time, segment.distance)}
+                    </td>
+                  )}
+                  {isRide && (
+                    <td className="px-4 py-2 text-right font-mono text-gray-600">
+                      {formatSpeed(effort.elapsed_time, segment.distance)}
                     </td>
                   )}
                   {segment.efforts.some(e => e.average_heartrate) && (
