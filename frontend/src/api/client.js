@@ -40,4 +40,9 @@ export const aiApi = {
   listAnalyses: (params) => api.get('/ai/analyses', { params }),
 }
 
+export const settingsApi = {
+  get: () => api.get('/settings'),
+  update: (data) => api.put('/settings', data),
+}
+
 export default api

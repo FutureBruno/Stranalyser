@@ -32,10 +32,11 @@ GOOGLE_MODELS = [
 # Provider abstraction
 # ---------------------------------------------------------------------------
 
-def _call_anthropic(prompt: str, model: str, max_tokens: int) -> tuple[str, dict, str]:
-    if not settings.anthropic_api_key:
+def _call_anthropic(prompt: str, model: str, max_tokens: int, api_key: str | None = None) -> tuple[str, dict, str]:
+    key = api_key or settings.anthropic_api_key
+    if not key:
         raise ValueError("ANTHROPIC_API_KEY ist nicht konfiguriert.")
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    client = anthropic.Anthropic(api_key=key)
     message = client.messages.create(
         model=model,
         max_tokens=max_tokens,
@@ -48,12 +49,13 @@ def _call_anthropic(prompt: str, model: str, max_tokens: int) -> tuple[str, dict
     return message.content[0].text.strip(), usage, message.model
 
 
-def _call_google(prompt: str, model: str, max_tokens: int) -> tuple[str, dict, str]:
-    if not settings.google_api_key:
+def _call_google(prompt: str, model: str, max_tokens: int, api_key: str | None = None) -> tuple[str, dict, str]:
+    key = api_key or settings.google_api_key
+    if not key:
         raise ValueError("GOOGLE_API_KEY ist nicht konfiguriert.")
     from google import genai
     from google.genai import types as genai_types
-    client = genai.Client(api_key=settings.google_api_key)
+    client = genai.Client(api_key=key)
     response = client.models.generate_content(
         model=model,
         contents=prompt,
@@ -72,14 +74,16 @@ def _call_ai(
     model: str | None,
     provider: str | None,
     max_tokens: int,
+    user_anthropic_key: str | None = None,
+    user_google_key: str | None = None,
 ) -> tuple[str, dict, str]:
     """Route to the correct provider and return (text, usage_dict, model_name)."""
     effective_provider = provider or settings.ai_provider
     effective_model = model or settings.ai_model
 
     if effective_provider == "google":
-        return _call_google(prompt, effective_model, max_tokens)
-    return _call_anthropic(prompt, effective_model, max_tokens)
+        return _call_google(prompt, effective_model, max_tokens, api_key=user_google_key)
+    return _call_anthropic(prompt, effective_model, max_tokens, api_key=user_anthropic_key)
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +218,8 @@ async def generate_weekly_report(
     week_offset: int = 0,
     model: str | None = None,
     provider: str | None = None,
+    user_anthropic_key: str | None = None,
+    user_google_key: str | None = None,
 ) -> AIAnalysis:
     """Generate AI weekly report. week_offset=0 is current week, -1 is last week."""
     now = datetime.now(timezone.utc)
@@ -307,7 +313,11 @@ Wichtig:
 - Schreibe natürlich und motivierend, nicht zu technisch
 """
 
-    text, usage, model_used = _call_ai(prompt, model, provider, max_tokens=2000)
+    text, usage, model_used = _call_ai(
+        prompt, model, provider, max_tokens=2000,
+        user_anthropic_key=user_anthropic_key,
+        user_google_key=user_google_key,
+    )
     parsed = _parse_json_response(text)
 
     return await _save_analysis(
@@ -329,6 +339,8 @@ async def analyze_activity(
     force_refresh: bool = False,
     model: str | None = None,
     provider: str | None = None,
+    user_anthropic_key: str | None = None,
+    user_google_key: str | None = None,
 ) -> AIAnalysis:
     """Analyze a single activity and compare with recent same-type activities."""
     activity = await db.get(Activity, activity_id)
@@ -406,7 +418,11 @@ Wichtig:
 - Schreibe auf Deutsch
 """
 
-    text, usage, model_used = _call_ai(prompt, model, provider, max_tokens=1500)
+    text, usage, model_used = _call_ai(
+        prompt, model, provider, max_tokens=1500,
+        user_anthropic_key=user_anthropic_key,
+        user_google_key=user_google_key,
+    )
     parsed = _parse_json_response(text)
 
     return await _save_analysis(
