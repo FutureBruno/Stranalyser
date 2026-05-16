@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.user_settings import UserSettings
 from app.routers.auth import require_athlete_id
@@ -35,7 +36,12 @@ async def get_settings(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     row = await db.get(UserSettings, athlete_id)
-    providers_info = ai_service.get_providers_info()
+    anthropic_key = (row.anthropic_api_key if row else None) or settings.anthropic_api_key or None
+    google_key = (row.google_api_key if row else None) or settings.google_api_key or None
+    providers_info = ai_service.get_providers_info(
+        user_anthropic_key=anthropic_key,
+        user_google_key=google_key,
+    )
     return {
         "anthropic_api_key": _mask(row.anthropic_api_key) if row else None,
         "google_api_key": _mask(row.google_api_key) if row else None,

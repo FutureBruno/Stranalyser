@@ -74,9 +74,10 @@ async def get_providers(
     """Return available AI providers, models and configuration status."""
     anthropic_key, google_key = await _get_user_keys(db, athlete_id)
     pref_provider, pref_model = await _get_user_preferred(db, athlete_id)
-    info = ai_service.get_providers_info()
-    info["providers"]["anthropic"]["configured"] = bool(anthropic_key)
-    info["providers"]["google"]["configured"] = bool(google_key)
+    info = ai_service.get_providers_info(
+        user_anthropic_key=anthropic_key,
+        user_google_key=google_key,
+    )
     if pref_provider:
         info["current_provider"] = pref_provider
     if pref_model:
