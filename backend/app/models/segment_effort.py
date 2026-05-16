@@ -33,6 +33,10 @@ class SegmentEffort(Base):
     average_cadence: Mapped[float | None] = mapped_column(Float)
     achievements: Mapped[list[Any] | None] = mapped_column(JSONB)
 
+    polyline: Mapped[str | None] = mapped_column(Text)
+    start_latlng: Mapped[list[float] | None] = mapped_column(JSONB)
+    end_latlng: Mapped[list[float] | None] = mapped_column(JSONB)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     activity: Mapped["Activity"] = relationship(back_populates="segment_efforts")

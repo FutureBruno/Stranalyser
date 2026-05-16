@@ -60,6 +60,9 @@ async def fetch_segments_for_activity(activity_id: int) -> int:
                 "average_heartrate": e.get("average_heartrate"),
                 "average_cadence": e.get("average_cadence"),
                 "achievements": e.get("achievements"),
+                "polyline": seg.get("polyline"),
+                "start_latlng": seg.get("start_latlng") or None,
+                "end_latlng": seg.get("end_latlng") or None,
             })
 
         if rows:
@@ -71,6 +74,9 @@ async def fetch_segments_for_activity(activity_id: int) -> int:
                     "pr_rank": stmt.excluded.pr_rank,
                     "kom_rank": stmt.excluded.kom_rank,
                     "achievements": stmt.excluded.achievements,
+                    "polyline": stmt.excluded.polyline,
+                    "start_latlng": stmt.excluded.start_latlng,
+                    "end_latlng": stmt.excluded.end_latlng,
                 },
             )
             await session.execute(stmt)
@@ -139,6 +145,7 @@ async def get_segments(athlete_id: int, sport_type: str | None = None) -> list[d
         efforts = (await session.execute(effort_q)).scalars().all()
 
         efforts_by_seg: dict[int, list] = {}
+        map_data_by_seg: dict[int, dict] = {}
         for eff in efforts:
             efforts_by_seg.setdefault(eff.segment_id, []).append({
                 "effort_id": eff.id,
@@ -150,9 +157,16 @@ async def get_segments(athlete_id: int, sport_type: str | None = None) -> list[d
                 "average_watts": eff.average_watts,
                 "average_heartrate": eff.average_heartrate,
             })
+            if eff.segment_id not in map_data_by_seg and (eff.polyline or eff.start_latlng):
+                map_data_by_seg[eff.segment_id] = {
+                    "polyline": eff.polyline,
+                    "start_latlng": eff.start_latlng,
+                    "end_latlng": eff.end_latlng,
+                }
 
         result = []
         for r in segment_rows:
+            map_data = map_data_by_seg.get(r.segment_id, {})
             result.append({
                 "segment_id": r.segment_id,
                 "segment_name": r.segment_name,
@@ -161,6 +175,9 @@ async def get_segments(athlete_id: int, sport_type: str | None = None) -> list[d
                 "best_elapsed_time": r.best_elapsed_time,
                 "avg_elapsed_time": round(r.avg_elapsed_time) if r.avg_elapsed_time else None,
                 "distance": r.distance,
+                "polyline": map_data.get("polyline"),
+                "start_latlng": map_data.get("start_latlng"),
+                "end_latlng": map_data.get("end_latlng"),
                 "efforts": efforts_by_seg.get(r.segment_id, []),
             })
         return result
